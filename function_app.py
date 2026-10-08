@@ -1,13 +1,19 @@
 import azure.functions as func
 import json
 import logging
+from datetime import datetime, timezone
 
 app = func.FunctionApp()
+
 
 # LAB-ONLY synthetic thresholds.
 # These are NOT real automotive safety limits.
 BATTERY_WARNING_TEMP_C = 35.0
 MOTOR_WARNING_TEMP_C = 65.0
+
+
+def utc_now():
+    return datetime.now(timezone.utc).isoformat()
 
 
 @app.event_hub_message_trigger(
@@ -18,7 +24,7 @@ MOTOR_WARNING_TEMP_C = 65.0
 def ProcessWarningEvent(event: func.EventHubEvent):
 
     # ---------------------------------------------------------
-    # 1. Read and parse telemetry
+    # 1. Read Event Hub message
     # ---------------------------------------------------------
     try:
         message = event.get_body().decode("utf-8")
@@ -39,7 +45,7 @@ def ProcessWarningEvent(event: func.EventHubEvent):
     motor_temp = telemetry.get("motorTemperatureC")
 
     # ---------------------------------------------------------
-    # 3. Validate required fields
+    # 3. Validate input
     # ---------------------------------------------------------
     if (
         vehicle_id is None
@@ -52,7 +58,7 @@ def ProcessWarningEvent(event: func.EventHubEvent):
         return
 
     # ---------------------------------------------------------
-    # 4. Evaluate warning rules
+    # 4. Apply deterministic warning rules
     # ---------------------------------------------------------
     battery_warning = (
         battery_temp >= BATTERY_WARNING_TEMP_C
@@ -80,32 +86,50 @@ def ProcessWarningEvent(event: func.EventHubEvent):
         return
 
     # ---------------------------------------------------------
-    # 6. Process warning telemetry
+    # 6. Create normalized vehicle-health-warning
     # ---------------------------------------------------------
     warning_event = {
+        "schemaVersion": "1.0",
         "eventType": "vehicle-health-warning",
+
         "vehicleId": vehicle_id,
-        "sourceTimestamp": telemetry.get("timestamp"),
+
         "severity": "warning",
+
+        "sourceTimestamp": telemetry.get("timestamp"),
+
+        "processedTimestamp": utc_now(),
 
         "alerts": {
             "batteryTemperatureWarning": battery_warning,
             "motorTemperatureWarning": motor_warning
         },
 
-        "telemetry": {
+        "vehicleState": {
             "speedKph": telemetry.get("speedKph"),
+
             "batterySocPercent": telemetry.get(
                 "batterySocPercent"
             ),
+
             "batteryTemperatureC": battery_temp,
+
             "motorTemperatureC": motor_temp,
-            "odometerKm": telemetry.get("odometerKm"),
-            "charging": telemetry.get("charging")
+
+            "odometerKm": telemetry.get(
+                "odometerKm"
+            ),
+
+            "charging": telemetry.get(
+                "charging"
+            )
         }
     }
 
+    # ---------------------------------------------------------
+    # 7. Log normalized warning
+    # ---------------------------------------------------------
     logging.warning(
-        "VEHICLE WARNING | %s",
+        "VEHICLE_HEALTH_WARNING | %s",
         json.dumps(warning_event)
     )
